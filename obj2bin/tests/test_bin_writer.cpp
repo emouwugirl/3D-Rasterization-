@@ -33,8 +33,12 @@ TEST(BinWriter, WritesEveryValue) {
   for (const bool colors : {false, true}) {
     const Mesh m = tetrahedron(colors);
     const std::string path = dir.file(colors ? "c.bin" : "n.bin");
-    save_mesh(path, m);
+    const Bounds written = save_mesh(path, m);
     expect_bin_holds(path, m);
+    const Bounds expected = compute_bounds(m.positions);
+    EXPECT_TRUE(test::same_bits(written.min, expected.min));
+    EXPECT_TRUE(test::same_bits(written.center, expected.center));
+    EXPECT_EQ(written.radius, expected.radius);
   }
 }
 

@@ -1,6 +1,9 @@
 // The OBJ reader: statements, corner forms, materials, warnings and errors.
 #include <gtest/gtest.h>
 
+#include <clocale>
+#include <cmath>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -71,16 +74,37 @@ TEST(ObjReader, BadInputGivesTheLine) {
   expect_error<ConvertError>([&] { obj(v + "f 1 2 3\nf 1 2 9\n"); }, "t.obj:6: a face uses vertex 9, but the file defines 4");
   expect_error<ConvertError>([&] { obj(v + "f -5 1 2\n"); }, "t.obj:5: relative vertex index -5 points before the first vertex");
   expect_error<ConvertError>([&] { obj(v + "vn 0 0 1\nf 1//1 2//2 3//1\n"); }, "t.obj:6: a face uses normal 2, but the file defines 1");
-  expect_error<ConvertError>([&] { obj(v + "f 1/1 2/1 3/1\n"); }, "t.obj:5: a face uses texture coordinate 1, but the file defines 0");
   expect_error<ConvertError>([&] { obj(v + "f 1 2 x\n"); }, "t.obj:5: malformed face corner");
   expect_error<ConvertError>([&] { obj(v + "f 1/a 2 3\n"); }, "t.obj:5: malformed");
   expect_error<ConvertError>([&] { obj(v + "v 1 2 zz\n"); }, "t.obj:5: invalid number after 'v'");
   expect_error<ConvertError>([&] { obj(v + "v 1 2\n"); }, "t.obj:5: expected x y z after 'v'");
   expect_error<ConvertError>([&] { obj(v + "v 1 nan 2\n"); }, "t.obj:5: vertex position is not finite");
+  expect_error<ConvertError>([&] { obj(v + "v 1e300 0 0\n"); }, "t.obj:5: vertex position is not finite");  // beyond float
   expect_error<ConvertError>([&] { obj(v + "v 1 2 3 4 5\n"); }, "t.obj:5: a 'v' statement has 3, 4, 6 or 7 values");
   expect_error<ConvertError>([&] { obj(v + "vn 0 1\n"); }, "t.obj:5: expected x y z after 'vn'");
   expect_error<ConvertError>([&] { obj(v); }, "t.obj: no triangles");
   expect_error<ConvertError>([&] { obj(v + "f 1 2\n"); }, "t.obj: no triangles");
+}
+
+TEST(ObjReader, BadTextureCoordinateReferencesAreOnlyWarnings) {
+  // Texture coordinates are not kept, so faces that refer to missing ones still convert.
+  const SourceMesh m = obj(std::string(kSquare) + "vt 0 0\nf 1/1 2/7 3/1\nf 1/0 3/1 4/1\n");  // lines 6 and 7
+  EXPECT_EQ(positions_of(m), (std::vector<std::uint32_t>{0, 1, 2, 0, 2, 3}));
+  EXPECT_TRUE(has_warning(m, "faces refer to texture coordinates the file does not define (e.g. line 7)"));
+  EXPECT_TRUE(obj(std::string(kSquare) + "vt 0 0\nf 1/1 2/1 3/1\n").warnings.empty());
+}
+
+TEST(ObjReader, SummaryWarningsSurviveTheCap) {
+  TempDir dir;
+  std::string mtl = "newmtl a\nmap_Kd a.png\n";
+  for (int i = 0; i < 25; ++i) mtl += "Kd spectral a.rfl\n";  // 25 warnings about single lines
+  write_file(dir.file("m.mtl"), mtl);
+  const SourceMesh m = obj(std::string("mtllib m.mtl\nusemtl missing\n") + kSquare + "f 1 2\nf 1 2 3\n", dir.dir());
+  EXPECT_TRUE(has_warning(m, "(5 more warnings)"));
+  EXPECT_TRUE(has_warning(m, "skipped 1 faces with fewer than 3 corners"));
+  EXPECT_TRUE(has_warning(m, "textures (map_Kd) are not supported"));
+  EXPECT_TRUE(has_warning(m, "1 materials are used but not defined in any MTL file ('missing')"));
+  EXPECT_EQ(m.warnings.size(), 20u + 1u + 3u);
 }
 
 TEST(ObjReader, IgnoredStatementsAreReported) {
@@ -132,6 +156,36 @@ TEST(ObjReader, SrgbToLinear) {
   EXPECT_EQ(srgb_to_linear(-1.0f), 0.0f);  // clamped
   EXPECT_NEAR(srgb_to_linear(0.5f), 0.214041, 1e-6);
   EXPECT_NEAR(srgb_to_linear(0.04045f), 0.0031308, 1e-7);
+  // It avoids std::pow (for determinism) but must agree with the sRGB formula: to within one float step
+  // for every 8-bit value.
+  for (int i = 0; i <= 255; ++i) {
+    const float c = static_cast<float>(i / 255.0);
+    const double v = c;
+    const float expected = static_cast<float>(v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4));
+    const float got = srgb_to_linear(c);
+    EXPECT_LE(std::fabs(got - expected), std::nextafter(expected, 2.0f) - expected) << i;
+  }
+}
+
+TEST(ObjReader, NumbersDoNotDependOnTheLocale) {
+  // 1.5e30 and the 22-digit number take the strtod path, which follows the C locale's decimal point.
+  const std::string text = "v 1.5e30 0.1234567890123456789012 -2.5e-30\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+  const SourceMesh c_locale = obj(text);
+  const std::string saved = std::setlocale(LC_NUMERIC, nullptr);
+  const char* comma = nullptr;
+  for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "fr_FR.utf8", "de_DE"}) {
+    if (std::setlocale(LC_NUMERIC, name)) {
+      comma = name;
+      break;
+    }
+  }
+  if (!comma) GTEST_SKIP() << "no locale with a decimal comma is installed";
+  const SourceMesh other = obj(text);
+  std::setlocale(LC_NUMERIC, saved.c_str());
+  EXPECT_EQ(other.positions[0].x, 1.5e30f);
+  EXPECT_EQ(other.positions[0].y, 0.12345679f);
+  EXPECT_EQ(other.positions[0].z, -2.5e-30f);
+  EXPECT_TRUE(test::same_bits(other.positions[0], c_locale.positions[0]));
 }
 
 TEST(ObjReader, MaterialColorsBecomeCornerColors) {
@@ -169,6 +223,23 @@ TEST(ObjReader, VertexColorsWinOverMaterials) {
   EXPECT_TRUE(test::same_bits(m.colors.at(m.corners[0].color), Vec3f{0, 0, 1}));
   EXPECT_TRUE(test::same_bits(m.colors.at(m.corners[1].color), Vec3f{1, 0, 0}));
   EXPECT_TRUE(has_warning(m, "only 1 of 3 vertices have colors"));
+}
+
+TEST(ObjReader, AbsoluteMaterialLibraryPathsAreUsedAsGiven) {
+  TempDir dir;
+  write_file(dir.file("abs.mtl"), "newmtl red\nKd 1 0 0\n");
+  const std::string absolute = std::filesystem::absolute(dir.file("abs.mtl")).string();
+  const SourceMesh m = obj("mtllib " + absolute + "\nusemtl red\n" + kSquare + "f 1 2 3\n", "/some/other/dir/");
+  EXPECT_TRUE(m.warnings.empty());
+  ASSERT_FALSE(m.colors.empty());
+  EXPECT_TRUE(test::same_bits(m.colors.at(m.corners[0].color), Vec3f{1, 0, 0}));
+}
+
+TEST(ObjReader, MaterialLibraryThatIsADirectoryIsAWarning) {
+  TempDir dir;
+  std::filesystem::create_directory(dir.file("textures"));
+  const SourceMesh m = obj(std::string("mtllib textures\n") + kSquare + "f 1 2 3\n", dir.dir());
+  EXPECT_TRUE(has_warning(m, "cannot read material library"));
 }
 
 TEST(ObjReader, MissingMaterialFilesAreWarnings) {

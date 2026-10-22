@@ -10,15 +10,18 @@
 #include <limits>
 #include <system_error>
 
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+#include "byte_order.hpp"
+#include "text_scan.hpp"
+
 namespace rasty {
 namespace {
-
-bool host_is_little_endian() {
-  const std::uint16_t one = 1;
-  std::uint8_t first = 0;
-  std::memcpy(&first, &one, 1);
-  return first == 1;
-}
 
 std::uint64_t align_up(std::uint64_t n) { return (n + bin::kAlignment - 1) / bin::kAlignment * bin::kAlignment; }
 
@@ -50,16 +53,45 @@ std::string to_string(const Vec3f& v) {
   return buf;
 }
 
-// RAII wrapper for a C file handle.
+// RAII wrapper for a C file handle. close() reports whether closing succeeded; the destructor only
+// cleans up after an error.
 struct File {
   std::FILE* f = nullptr;
   File(const std::string& path, const char* mode) : f(std::fopen(path.c_str(), mode)) {}
   ~File() {
     if (f) std::fclose(f);
   }
+  bool close() {
+    const bool ok = std::fclose(f) == 0;
+    f = nullptr;
+    return ok;
+  }
   File(const File&) = delete;
   File& operator=(const File&) = delete;
 };
+
+// Pushes the file's buffered data to the disk, so that a crash after the rename cannot leave an empty file.
+bool flush_to_disk(std::FILE* f) {
+  if (std::fflush(f) != 0) return false;
+#if defined(_WIN32)
+  return _commit(_fileno(f)) == 0;
+#else
+  return ::fsync(fileno(f)) == 0;
+#endif
+}
+
+// Makes a rename in `dir` durable (best effort; POSIX only).
+void sync_directory(const std::filesystem::path& dir) {
+#if !defined(_WIN32)
+  const int fd = ::open(dir.empty() ? "." : dir.c_str(), O_RDONLY);
+  if (fd >= 0) {
+    ::fsync(fd);
+    ::close(fd);
+  }
+#else
+  (void)dir;
+#endif
+}
 
 }  // namespace
 
@@ -83,7 +115,7 @@ Bounds compute_bounds(const std::vector<Vec3f>& positions) {
     r2 = std::max(r2, dx * dx + dy * dy + dz * dz);
   }
   const double r = std::sqrt(r2);
-  b.radius = static_cast<float>(r);
+  b.radius = convert::detail::to_float(r);
   if (static_cast<double>(b.radius) < r) {  // round up, so that no vertex lies outside the sphere
     b.radius = std::nextafter(b.radius, std::numeric_limits<float>::infinity());
   }
@@ -130,9 +162,9 @@ void validate_mesh(const Mesh& mesh) {
   }
 }
 
-void save_mesh(const std::string& path, const Mesh& mesh) {
+Bounds save_mesh(const std::string& path, const Mesh& mesh) {
   validate_mesh(mesh);
-  if (!host_is_little_endian()) throw MeshError(".bin files are little-endian, and this machine is not");
+  if (!convert::detail::host_is_little_endian()) throw MeshError(".bin files are little-endian, and this machine is not");
 
   const std::uint64_t nv = mesh.positions.size();
   const std::uint64_t nt = mesh.triangles.size();
@@ -177,7 +209,8 @@ void save_mesh(const std::string& path, const Mesh& mesh) {
     put_at(layout.normals, mesh.normals.data(), 12 * nv);
     if (mesh.has_colors()) put_at(layout.colors, mesh.colors.data(), 12 * nv);
     put_at(layout.indices, mesh.triangles.data(), 12 * nt);
-    ok = ok && written == layout.file_size && std::fflush(out.f) == 0;
+    ok = ok && written == layout.file_size && flush_to_disk(out.f);
+    ok = out.close() && ok;
   }
   std::error_code ec;
   if (ok) std::filesystem::rename(tmp, path, ec);
@@ -185,6 +218,8 @@ void save_mesh(const std::string& path, const Mesh& mesh) {
     std::filesystem::remove(tmp, ec);
     throw MeshError("error writing '" + path + "'");
   }
+  sync_directory(std::filesystem::path(path).parent_path());
+  return bounds;
 }
 
 }  // namespace rasty

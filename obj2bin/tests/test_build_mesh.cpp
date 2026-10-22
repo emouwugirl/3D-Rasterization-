@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <vector>
@@ -63,20 +64,46 @@ TEST(BuildMesh, SharedVerticesStayShared) {
   EXPECT_NO_THROW(validate_mesh(m));
 }
 
-TEST(BuildMesh, ComputedNormalsAreAreaWeightedAndFollowTheWinding) {
+TEST(BuildMesh, ComputedNormalsAreAngleWeightedAndFollowTheWinding) {
   // Triangle A lies in the xy plane with area 2 (normal +z); triangle B in the xz plane with area 1/2,
-  // wound so that its normal is +y. Vertex 0 is in both.
+  // wound so that its normal is +y. Vertex 0 has a right angle in both, so both count equally, whatever
+  // their areas.
   const std::vector<Vec3f> p = {{0, 0, 0}, {2, 0, 0}, {0, 2, 0}, {0, 0, 1}, {1, 0, 0}};
   const Mesh m = build_mesh(source(p, {{0, 1, 2}, {0, 3, 4}}), {});
-  const float s = 1.0f / std::sqrt(17.0f);
+  const float h = 1.0f / std::sqrt(2.0f);
   EXPECT_NEAR(m.normals[0].x, 0.0f, 1e-7);
-  EXPECT_NEAR(m.normals[0].y, 1 * s, 1e-7);
-  EXPECT_NEAR(m.normals[0].z, 4 * s, 1e-7);
+  EXPECT_NEAR(m.normals[0].y, h, 1e-7);
+  EXPECT_NEAR(m.normals[0].z, h, 1e-7);
   EXPECT_TRUE(same_bits(m.normals[1], Vec3f{0, 0, 1}));
   EXPECT_TRUE(same_bits(m.normals[3], Vec3f{0, 1, 0}));
 
   const Mesh flipped = build_mesh(source(p, {{0, 2, 1}}), {});  // clockwise seen from +z
   for (const Vec3f& n : flipped.normals) EXPECT_TRUE(same_bits(n, Vec3f{0, 0, -1}));
+}
+
+TEST(BuildMesh, QuadNormalsDoNotDependOnTheDiagonal) {
+  // A cube of quads, split along one diagonal of every face and then along the other. Area weights would
+  // tilt each corner's normal towards the faces that put two triangles at that corner.
+  const std::vector<Vec3f> p = {{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+                                {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1}};
+  const std::uint32_t quads[6][4] = {{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
+  const float k = 1.0f / std::sqrt(3.0f);
+  for (const std::uint32_t rot : {0u, 1u}) {
+    SCOPED_TRACE(rot);
+    std::vector<Tri> tris;
+    for (const auto& q : quads) {
+      const std::uint32_t a = q[rot], b = q[(rot + 1) % 4], c = q[(rot + 2) % 4], d = q[(rot + 3) % 4];
+      tris.push_back({a, b, c});
+      tris.push_back({a, c, d});
+    }
+    const Mesh m = build_mesh(source(p, tris), {});
+    ASSERT_EQ(m.vertex_count(), 8u);
+    for (std::size_t v = 0; v < 8; ++v) {  // every corner's normal points straight out along the diagonal
+      EXPECT_NEAR(m.normals[v].x, m.positions[v].x * k, 1e-7) << "vertex " << v;
+      EXPECT_NEAR(m.normals[v].y, m.positions[v].y * k, 1e-7) << "vertex " << v;
+      EXPECT_NEAR(m.normals[v].z, m.positions[v].z * k, 1e-7) << "vertex " << v;
+    }
+  }
 }
 
 TEST(BuildMesh, DegenerateTrianglesAreRemoved) {
@@ -102,8 +129,9 @@ TEST(BuildMesh, VerticesAreNumberedInOrderOfFirstUse) {
   EXPECT_TRUE(same_bits(m.positions[2], p[1]));
   EXPECT_TRUE(same_bits(m.positions[3], p[4]));
   EXPECT_EQ(st.unused_positions, 2u);
-  EXPECT_TRUE(same_bits(m.bounds.min, Vec3f{0, -1, 0}));  // unused vertices do not count
-  EXPECT_TRUE(same_bits(m.bounds.max, Vec3f{1, 1, 0}));
+  const Bounds b = compute_bounds(m.positions);
+  EXPECT_TRUE(same_bits(b.min, Vec3f{0, -1, 0}));  // unused vertices are not in the mesh
+  EXPECT_TRUE(same_bits(b.max, Vec3f{1, 1, 0}));
 }
 
 TEST(BuildMesh, FileNormalsSplitAVertexOnlyWhenTheyDiffer) {
@@ -163,6 +191,16 @@ TEST(BuildMesh, NormalsThatCancelTakeTheFirstTriangles) {
   EXPECT_EQ(m.vertex_count(), 3u);
   for (const Vec3f& n : m.normals) EXPECT_TRUE(same_bits(n, Vec3f{0, 0, 1}));
   EXPECT_EQ(st.cancelled_normals, 3u);
+  EXPECT_EQ(st.default_normals, 0u);
+}
+
+TEST(BuildMesh, VerticesWithOnlyZeroAreaTrianglesGetPlusZ) {
+  // Three different points on a line: kept (no two corners coincide), but there is no direction to use.
+  BuildStats st;
+  const Mesh m = build_mesh(source({{0, 0, 0}, {1, 1, 0}, {2, 2, 0}}, {{0, 1, 2}}), {}, &st);
+  for (const Vec3f& n : m.normals) EXPECT_TRUE(same_bits(n, Vec3f{0, 0, 1}));
+  EXPECT_EQ(st.default_normals, 3u);
+  EXPECT_EQ(st.cancelled_normals, 0u);
 }
 
 TEST(BuildMesh, ColorsSplitVerticesOrAreLeftOut) {
@@ -231,14 +269,18 @@ TEST(ConvertModel, ConvertsFilesEndToEnd) {
   EXPECT_TRUE(colored.has_colors());
   EXPECT_EQ(colored.vertex_count(), 16u);  // every corner of the cube touches a red and a blue face
 
-  save_mesh(dir.file("cube.bin"), colored);
+  const Bounds written = save_mesh(dir.file("cube.bin"), colored);
   test::expect_bin_holds(dir.file("cube.bin"), colored);
+  EXPECT_TRUE(same_bits(written.max, Vec3f{1, 1, 1}));
+  EXPECT_EQ(written.radius, compute_bounds(colored.positions).radius);
 
   const Mesh a = convert_model(dir.file("cube.ply"), {});
   const Mesh b = convert_model(dir.file("cube_ply.dat"), {});
   expect_same_mesh(a, b);
   expect_error<ConvertError>([&] { convert_model(dir.file("cube.stl"), {}); }, "unsupported input");
   expect_error<ConvertError>([&] { convert_model(dir.file("none.obj"), {}); }, "cannot open");
+  std::filesystem::create_directory(dir.file("folder.obj"));
+  expect_error<ConvertError>([&] { convert_model(dir.file("folder.obj"), {}); }, "is not a regular file");
 }
 
 // The converter's promises about its output, on a messy model: duplicate and degenerate triangles,

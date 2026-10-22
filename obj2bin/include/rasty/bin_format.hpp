@@ -54,7 +54,6 @@ struct Mesh {
   std::vector<Vec3f> normals;      // one per vertex, unit length
   std::vector<Vec3f> colors;       // empty, or one linear RGB albedo per vertex
   std::vector<Triangle> triangles;
-  Bounds bounds;                   // save_mesh() computes its own from the positions
 
   std::size_t vertex_count() const { return positions.size(); }
   std::size_t triangle_count() const { return triangles.size(); }
@@ -67,9 +66,10 @@ class MeshError : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
-// Checks the mesh, then writes it as a .bin file with bounds computed from its positions. The file is
-// written under a temporary name and renamed at the end, so a failed write never leaves a partial file.
-void save_mesh(const std::string& path, const Mesh& mesh);
+// Checks the mesh, then writes it as a .bin file with bounds computed from its positions, and returns
+// those bounds. The data goes to a temporary file that is flushed to disk before it is renamed to
+// `path`, so `path` never holds a partial file, even after a crash.
+Bounds save_mesh(const std::string& path, const Mesh& mesh);
 
 // Throws MeshError if the mesh breaks a rule of the format: at least one vertex and one triangle, one
 // normal (and color, if any) per vertex, indices less than the vertex count, finite values, unit-length

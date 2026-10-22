@@ -1,10 +1,14 @@
-// Fast, locale-independent number scanning for the OBJ and PLY readers (internal header).
+// Text scanning shared by the OBJ and PLY readers: lines, words and fast, locale-independent number
+// parsing (internal header).
 #pragma once
 
+#include <clocale>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
+#include <string_view>
 
 namespace rasty::convert::detail {
 
@@ -14,6 +18,36 @@ inline bool is_digit(char c) { return c >= '0' && c <= '9'; }
 
 inline void skip_spaces(const char*& p, const char* end) {
   while (p < end && is_space(*p)) ++p;
+}
+
+// The line that starts at `pos`, without its terminator ('\n', and a '\r' before it); moves `pos` to
+// the start of the next line. Returns false when `pos` is at the end of the text.
+inline bool next_line(std::string_view text, std::size_t& pos, std::string_view& line) {
+  if (pos >= text.size()) return false;
+  const std::size_t nl = text.find('\n', pos);
+  const std::size_t line_end = nl == std::string_view::npos ? text.size() : nl;
+  line = text.substr(pos, line_end - pos);
+  if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+  pos = nl == std::string_view::npos ? text.size() : nl + 1;
+  return true;
+}
+
+// The next whitespace-separated word (empty at the end of the text); moves p past it.
+inline std::string_view next_token(const char*& p, const char* end) {
+  skip_spaces(p, end);
+  const char* s = p;
+  while (p < end && !is_space(*p)) ++p;
+  return std::string_view(s, static_cast<std::size_t>(p - s));
+}
+
+// double -> float. Values beyond float's range become +-infinity; a plain cast of them is undefined
+// behaviour in C++.
+inline float to_float(double d) {
+  constexpr double kMax = static_cast<double>(std::numeric_limits<float>::max());
+  if (d > kMax) return std::numeric_limits<float>::infinity();
+  if (d < -kMax) return -std::numeric_limits<float>::infinity();
+  if (d != d) return std::numeric_limits<float>::quiet_NaN();
+  return static_cast<float>(d);
 }
 
 // [+-]digits. On failure returns false and leaves p unchanged.
@@ -37,16 +71,26 @@ inline bool parse_int(const char*& p, const char* end, int64_t& out) {
 }
 
 // strtod on a copy of the whole token (the input is not necessarily NUL-terminated). Handles inf/nan
-// and numbers the fast path declines. Assumes the "C" numeric locale.
+// and numbers the fast path declines. strtod expects the decimal point of the current C locale, so the
+// token's '.' is rewritten into that form first; the result is the same in every locale.
 inline bool parse_double_slow(const char*& p, const char* end, double& out) {
-  size_t n = 0;
+  std::size_t n = 0;
   while (p + n < end && !is_space(p[n]) && p[n] != '\n' && p[n] != '/') ++n;
-  const std::string token(p, n);
+  std::string token(p, n);
+  const char* point = std::localeconv()->decimal_point;
+  const std::size_t dot = token.find('.');
+  std::size_t extra = 0;  // how much longer the locale's decimal point is than '.'
+  if (dot != std::string::npos && point && point[0] != '\0' && std::strcmp(point, ".") != 0) {
+    token.replace(dot, 1, point);
+    extra = std::strlen(point) - 1;
+  }
   char* stop = nullptr;
   const double v = std::strtod(token.c_str(), &stop);
-  if (stop == token.c_str()) return false;
+  std::size_t used = static_cast<std::size_t>(stop - token.c_str());
+  if (used == 0) return false;
+  if (dot != std::string::npos && used > dot) used -= extra;
   out = v;
-  p += stop - token.c_str();
+  p += used;
   return true;
 }
 
@@ -135,7 +179,7 @@ inline bool parse_double(const char*& p, const char* end, double& out) {
 inline bool parse_float(const char*& p, const char* end, float& out) {
   double d;
   if (!parse_double(p, end, d)) return false;
-  out = static_cast<float>(d);
+  out = to_float(d);
   return true;
 }
 

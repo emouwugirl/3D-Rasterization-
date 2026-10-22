@@ -2,8 +2,8 @@
 //
 // Read: v (x y z, then optionally w, or r g b vertex colors), vn, f with v, v/vt, v//vn and v/vt/vn
 // corners (negative indices count back from the end of the list so far), mtllib, usemtl, and each
-// material's Kd. vt indices are checked, but texture coordinates are not kept: the renderers do not use
-// textures. Faces with more than three corners are fan-triangulated.
+// material's Kd. Texture coordinates are not kept (the renderers do not use textures), so references
+// to missing ones are only a warning. Faces with more than three corners are fan-triangulated.
 // Skipped: o, g and s silently; lines (l) and points (p) with one warning; any other statement with one
 // warning per keyword.
 #include <cmath>
@@ -23,34 +23,23 @@ namespace rasty::convert {
 namespace {
 
 using detail::is_space;
+using detail::next_token;
 using detail::parse_float;
 using detail::parse_int;
 using detail::skip_spaces;
 
+// At most this many warnings about individual lines; summary warnings are always kept.
 constexpr std::size_t kMaxWarnings = 20;
 
 // Calls fn(begin, end, line_number) for every line, without its terminator, after a UTF-8 byte order mark.
 template <typename Fn>
 void for_each_line(std::string_view text, Fn&& fn) {
   const char* p = text.data();
-  const char* const end = p + text.size();
-  detail::skip_utf8_bom(p, end);
-  std::size_t line = 0;
-  while (p < end) {
-    ++line;
-    const char* nl = static_cast<const char*>(std::memchr(p, '\n', static_cast<std::size_t>(end - p)));
-    const char* line_end = nl ? nl : end;
-    fn(p, line_end, line);
-    p = nl ? nl + 1 : end;
-  }
-}
-
-// The next whitespace-separated word on the line (empty at the end of the line).
-std::string_view next_token(const char*& p, const char* end) {
-  skip_spaces(p, end);
-  const char* s = p;
-  while (p < end && !is_space(*p)) ++p;
-  return std::string_view(s, static_cast<std::size_t>(p - s));
+  detail::skip_utf8_bom(p, text.data() + text.size());
+  std::size_t pos = static_cast<std::size_t>(p - text.data());
+  std::size_t number = 0;
+  std::string_view line;
+  while (detail::next_line(text, pos, line)) fn(line.data(), line.data() + line.size(), ++number);
 }
 
 // The rest of the line without surrounding whitespace (material and file names may contain spaces).
@@ -84,6 +73,8 @@ class ObjReader {
     out_.format = "OBJ";
     for_each_line(text_, [this](const char* p, const char* end, std::size_t line) { parse_line(p, end, line); });
     finish();
+    if (suppressed_warnings_ > 0) out_.warnings.push_back("(" + std::to_string(suppressed_warnings_) + " more warnings)");
+    out_.warnings.insert(out_.warnings.end(), summaries_.begin(), summaries_.end());
     return std::move(out_);
   }
 
@@ -93,11 +84,24 @@ class ObjReader {
   }
   [[noreturn]] void fail(const std::string& msg) const { throw ConvertError(name_ + ": " + msg); }
 
+  // A warning about one line or file; only the first kMaxWarnings are kept.
   void warn(const std::string& msg) {
     if (out_.warnings.size() < kMaxWarnings) {
       out_.warnings.push_back(msg);
     } else {
       ++suppressed_warnings_;
+    }
+  }
+
+  // A warning that sums up the whole file; always kept, after the others.
+  void summarize(const std::string& msg) { summaries_.push_back(msg); }
+
+  // Texture coordinates are discarded, so a bad reference to one is noted rather than an error.
+  void note_texcoord_ref(std::int64_t idx, std::size_t line) {
+    const bool bad = idx == 0 || (idx < 0 && static_cast<std::int64_t>(texcoord_count_) + idx < 0);
+    if (bad && bad_texcoord_line_ == 0) bad_texcoord_line_ = line;
+    if (idx > 0 && static_cast<std::uint64_t>(idx) > max_texcoord_ref_.count) {
+      max_texcoord_ref_ = MaxRef{static_cast<std::uint64_t>(idx), line};
     }
   }
 
@@ -197,7 +201,7 @@ class ObjReader {
       if (p < end && !is_space(*p) && *p != '#') fail(line, "malformed face corner");
       Corner c;
       c.position = resolve(v, out_.positions.size(), line, "vertex", position_ref_);
-      if (has_vt) resolve(vt, texcoord_count_, line, "texture coordinate", texcoord_ref_);
+      if (has_vt) note_texcoord_ref(vt, line);
       if (has_vn) c.normal = resolve(vn, out_.normals.size(), line, "normal", normal_ref_);
       face_.push_back(c);
       skip_spaces(p, end);
@@ -226,11 +230,16 @@ class ObjReader {
     return id;
   }
 
+  // A material library's path: absolute names as given, others relative to the OBJ file's directory.
+  std::string library_path(const std::string& name) const {
+    return std::filesystem::path(name).is_absolute() ? name : base_dir_ + name;
+  }
+
   void load_material_libraries(const std::string& spec) {
     // Normally a list of file names; the whole remainder is tried first so that names with spaces work.
     std::vector<std::string> files;
     std::error_code ec;
-    if (!spec.empty() && std::filesystem::is_regular_file(base_dir_ + spec, ec)) {
+    if (!spec.empty() && std::filesystem::is_regular_file(library_path(spec), ec)) {
       files.push_back(spec);
     } else {
       const char* p = spec.data();
@@ -238,7 +247,7 @@ class ObjReader {
       for (std::string_view tok = next_token(p, end); !tok.empty(); tok = next_token(p, end)) files.emplace_back(tok);
     }
     for (const std::string& f : files) {
-      if (loaded_libraries_.insert(f).second) parse_mtl(base_dir_ + f);
+      if (loaded_libraries_.insert(f).second) parse_mtl(library_path(f));
     }
   }
 
@@ -291,22 +300,25 @@ class ObjReader {
     };
     check(position_ref_, out_.positions.size(), "vertex");
     check(normal_ref_, out_.normals.size(), "normal");
-    check(texcoord_ref_, texcoord_count_, "texture coordinate");
     if (out_.corners.empty()) fail("no triangles (the file has no faces with three or more corners)");
 
     if (out_.skipped_faces > 0) {
-      warn(name_ + ": skipped " + std::to_string(out_.skipped_faces) + " faces with fewer than 3 corners (the first on line " +
-           std::to_string(first_skipped_line_) + ")");
+      summarize(name_ + ": skipped " + std::to_string(out_.skipped_faces) + " faces with fewer than 3 corners (the first on line " +
+                std::to_string(first_skipped_line_) + ")");
     }
     if (lines_and_points_ > 0) {
-      warn(name_ + ": ignored " + std::to_string(lines_and_points_) + " line and point statements (only faces are drawn)");
+      summarize(name_ + ": ignored " + std::to_string(lines_and_points_) + " line and point statements (only faces are drawn)");
     }
     if (weighted_vertices_ > 0) {
-      warn(name_ + ": ignored the w coordinate of " + std::to_string(weighted_vertices_) + " vertices");
+      summarize(name_ + ": ignored the w coordinate of " + std::to_string(weighted_vertices_) + " vertices");
     }
-    if (uses_textures_) warn(name_ + ": textures (map_Kd) are not supported; materials keep only their Kd color");
+    if (bad_texcoord_line_ == 0 && max_texcoord_ref_.count > texcoord_count_) bad_texcoord_line_ = max_texcoord_ref_.line;
+    if (bad_texcoord_line_ > 0) {
+      summarize(name_ + ": faces refer to texture coordinates the file does not define (e.g. line " +
+                std::to_string(bad_texcoord_line_) + "); ignored, since texture coordinates are not used");
+    }
+    if (uses_textures_) summarize(name_ + ": textures (map_Kd) are not supported; materials keep only their Kd color");
     assign_colors();
-    if (suppressed_warnings_ > 0) out_.warnings.push_back("(" + std::to_string(suppressed_warnings_) + " more warnings)");
   }
 
   // Corner colors: the vertex color if the vertex has one, else the face's material color, else the
@@ -320,8 +332,8 @@ class ObjReader {
       std::string list;
       for (std::size_t i = 0; i < undefined.size() && i < 5; ++i) list += (i ? ", " : "") + undefined[i];
       if (undefined.size() > 5) list += ", ...";
-      warn(name_ + ": " + std::to_string(undefined.size()) + " materials are used but not defined in any MTL file (" + list +
-           "); their faces get the default color");
+      summarize(name_ + ": " + std::to_string(undefined.size()) + " materials are used but not defined in any MTL file (" +
+                list + "); their faces get the default color");
     }
 
     bool any_material = false;
@@ -331,8 +343,8 @@ class ObjReader {
     std::size_t colored = 0;
     for (const std::uint32_t c : vertex_color_) colored += c != kNone ? 1 : 0;
     if (colored > 0 && colored < out_.positions.size()) {
-      warn(name_ + ": only " + std::to_string(colored) + " of " + std::to_string(out_.positions.size()) +
-           " vertices have colors; the others take their face's material color");
+      summarize(name_ + ": only " + std::to_string(colored) + " of " + std::to_string(out_.positions.size()) +
+                " vertices have colors; the others take their face's material color");
     }
     std::uint32_t default_color = kNone;
     for (std::size_t t = 0; t < triangle_material_.size(); ++t) {
@@ -372,7 +384,9 @@ class ObjReader {
   bool uses_textures_ = false;
 
   std::size_t texcoord_count_ = 0;
-  MaxRef position_ref_, normal_ref_, texcoord_ref_;
+  MaxRef position_ref_, normal_ref_, max_texcoord_ref_;
+  std::size_t bad_texcoord_line_ = 0;  // first line with an invalid texture coordinate reference
+  std::vector<std::string> summaries_;
   std::vector<Corner> face_;
   std::size_t first_skipped_line_ = 0;
   std::uint64_t lines_and_points_ = 0;

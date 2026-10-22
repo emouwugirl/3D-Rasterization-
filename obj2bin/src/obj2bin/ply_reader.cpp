@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "byte_order.hpp"
 #include "convert.hpp"
 #include "text_scan.hpp"
 
@@ -62,13 +63,6 @@ struct PlyElement {
 
 enum class PlyFormat { Ascii, BinaryLittleEndian, BinaryBigEndian };
 
-bool host_is_little_endian() {
-  const std::uint16_t one = 1;
-  std::uint8_t first = 0;
-  std::memcpy(&first, &one, 1);
-  return first == 1;
-}
-
 // Sequential reader for the data after the header. Errors throw ConvertError with a short message; the
 // caller adds the file and element.
 class PlyBody {
@@ -77,7 +71,7 @@ class PlyBody {
       : p_(data.data() + offset),
         end_(data.data() + data.size()),
         format_(format),
-        swap_(format != PlyFormat::Ascii && (format == PlyFormat::BinaryLittleEndian) != host_is_little_endian()) {}
+        swap_(format != PlyFormat::Ascii && (format == PlyFormat::BinaryLittleEndian) != detail::host_is_little_endian()) {}
 
   double read(PlyType t) {
     if (format_ == PlyFormat::Ascii) {
@@ -174,13 +168,9 @@ class PlyBody {
 
 std::vector<std::string_view> split_words(std::string_view line) {
   std::vector<std::string_view> words;
-  std::size_t i = 0;
-  while (i < line.size()) {
-    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
-    const std::size_t start = i;
-    while (i < line.size() && line[i] != ' ' && line[i] != '\t') ++i;
-    if (i > start) words.push_back(line.substr(start, i - start));
-  }
+  const char* p = line.data();
+  const char* const end = p + line.size();
+  for (std::string_view w = detail::next_token(p, end); !w.empty(); w = detail::next_token(p, end)) words.push_back(w);
   return words;
 }
 
@@ -191,7 +181,7 @@ float color_channel(double v, PlyType t) {
     case PlyType::UInt8: return static_cast<float>(v / 255.0);
     case PlyType::Int16:
     case PlyType::UInt16: return static_cast<float>(v / 65535.0);
-    default: return static_cast<float>(v);
+    default: return detail::to_float(v);
   }
 }
 
@@ -209,12 +199,7 @@ SourceMesh read_ply(std::string_view data, const std::string& name) {
   }
   std::size_t line_no = 0;
   const auto next_line = [&](std::string_view& line) {
-    if (pos >= data.size()) return false;
-    const std::size_t nl = data.find('\n', pos);
-    const std::size_t line_end = nl == std::string_view::npos ? data.size() : nl;
-    line = data.substr(pos, line_end - pos);
-    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-    pos = nl == std::string_view::npos ? data.size() : nl + 1;
+    if (!detail::next_line(data, pos, line)) return false;
     ++line_no;
     return true;
   };
@@ -366,10 +351,10 @@ SourceMesh read_ply(std::string_view data, const std::string& name) {
             }
           }
           const auto i = static_cast<std::size_t>(current_index);
-          const Vec3f p{static_cast<float>(get(kX)), static_cast<float>(get(kY)), static_cast<float>(get(kZ))};
+          const Vec3f p{detail::to_float(get(kX)), detail::to_float(get(kY)), detail::to_float(get(kZ))};
           if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) throw ConvertError("vertex position is not finite");
           out.positions[i] = p;
-          if (has_normals) out.normals[i] = Vec3f{static_cast<float>(get(kNX)), static_cast<float>(get(kNY)), static_cast<float>(get(kNZ))};
+          if (has_normals) out.normals[i] = Vec3f{detail::to_float(get(kNX)), detail::to_float(get(kNY)), detail::to_float(get(kNZ))};
           if (has_colors) out.colors[i] = Vec3f{channel(kR), channel(kG), channel(kB)};
         }
       } else if (&el == face_el) {

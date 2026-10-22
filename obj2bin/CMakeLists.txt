@@ -33,7 +33,8 @@ add_library(obj2bin_lib STATIC
   src/obj2bin/ply_reader.cpp
   src/obj2bin/build_mesh.cpp
   src/obj2bin/convert.cpp
-  src/obj2bin/bin_writer.cpp)
+  src/obj2bin/bin_writer.cpp
+  src/obj2bin/cli.cpp)
 target_include_directories(obj2bin_lib PUBLIC include src/obj2bin)
 target_compile_options(obj2bin_lib PRIVATE ${RASTY_FP_RULES} ${RASTY_WARNINGS})
 
@@ -65,7 +66,8 @@ if(RASTY_BUILD_TESTS)
     tests/test_bin_writer.cpp
     tests/test_obj_reader.cpp
     tests/test_ply_reader.cpp
-    tests/test_build_mesh.cpp)
+    tests/test_build_mesh.cpp
+    tests/test_cli.cpp)
   target_link_libraries(asset_tests PRIVATE obj2bin_lib GTest::gtest_main)
   target_compile_options(asset_tests PRIVATE ${RASTY_WARNINGS})
 

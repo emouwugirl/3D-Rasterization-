@@ -70,11 +70,13 @@ struct BuildStats {
   std::uint64_t computed_normals = 0;      // vertices whose normal was computed
   std::uint64_t invalid_file_normals = 0;  // file normals of zero length (computed ones used instead)
   std::uint64_t cancelled_normals = 0;     // computed normals that summed to zero; first triangle's used
+  std::uint64_t default_normals = 0;       // vertices whose triangles all have zero area; set to +Z
 };
 
 Mesh build_mesh(const SourceMesh& source, const ConvertOptions& options, BuildStats* stats = nullptr);
 
-// What convert_model() did, for printing.
+// What convert_model() did, for printing. Everything up to `warnings` is filled in as soon as the file
+// has been read, so the warnings are available even when building the mesh fails.
 struct ConvertReport {
   std::string format;
   std::uint64_t input_bytes = 0;
@@ -93,9 +95,10 @@ struct ConvertReport {
 Mesh convert_model(const std::string& path, const ConvertOptions& options, ConvertReport* report = nullptr);
 
 // sRGB-encoded value -> linear, clamped to [0, 1] (vertex colors in model files are display colors).
+// Computed from basic arithmetic only, so it gives the same bits on every machine.
 float srgb_to_linear(float c);
 
-// The whole file as bytes. Throws ConvertError if it cannot be read.
+// The whole file as bytes. Throws ConvertError if it is missing, not a regular file, or unreadable.
 std::string read_file(const std::string& path);
 
 }  // namespace rasty::convert

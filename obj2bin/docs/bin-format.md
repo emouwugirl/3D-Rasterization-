@@ -57,17 +57,24 @@ Every file `obj2bin` writes has these properties:
 - **One index per corner.** OBJ's separate `v/vt/vn` indices are merged: corners with the same source
   vertex, normal and color share one vertex, and only where those differ is a vertex duplicated.
 - **A unit normal for every vertex.** If the model has normals, they are used: normalized, and kept bit
-  for bit when they already have unit length. Otherwise each vertex gets the area-weighted average of
-  the normals of the triangles around it. Where those cancel out (back-to-back "fin" triangles in
-  scanned models), it gets the first such triangle's normal.
-- **No triangles that cannot cover a pixel.** A triangle with two corners at the same position has zero
-  area from every viewpoint, so it is dropped (242 of them in the Happy Buddha).
+  for bit when they already have unit length. Otherwise each vertex gets the average of the normals of
+  the triangles around it, each weighted by the triangle's angle at that vertex. Angle weights add up
+  the same however a polygon was split into triangles, so a quad model's normals do not depend on which
+  diagonal the split used (area weights would tilt them). Where the normals cancel out (back-to-back
+  "fin" triangles in scanned models), the vertex gets the first such triangle's normal; a vertex whose
+  triangles all have zero area gets +Z.
+- **No triangles with two corners at the same position.** Such a triangle has zero area from every
+  viewpoint, so it is dropped (242 of them in the Happy Buddha). Triangles whose three different
+  corners lie on a line are kept: telling them apart exactly would need exact arithmetic, and they
+  are harmless.
 - **No unused vertices, numbered in order of first use.** Vertex `k` first appears in a triangle no
   earlier than vertex `k-1` does. The numbering depends only on the faces, not on how the source file
   ordered its vertex list. (It does not make vertex fetches more local than a well-ordered source: on
   the Happy Buddha, a triangle's three indices span about the same range as in the PLY's numbering.)
-- **Deterministic.** The same input gives the same bytes on every machine and every run. An OBJ and a
-  PLY of the same model give identical files.
+- **Deterministic.** The same input gives the same bytes on every machine and every run: the
+  converter uses only basic arithmetic and square roots, which round the same way everywhere (angles
+  and sRGB decoding avoid libm functions such as `atan2` and `pow`), and it is built without fused
+  multiply-add. An OBJ and a PLY of the same model give identical files.
 
 ## Layout
 
@@ -98,8 +105,8 @@ The same layout is the `rasty::bin::Header` struct in [`include/rasty/bin_format
 
 ## What is deliberately left out
 
-- **Texture coordinates and textures.** Neither renderer samples textures, so `vt` data is checked
-  but not stored. OBJ materials keep their diffuse color (`Kd`), baked into vertex colors.
+- **Texture coordinates and textures.** Neither renderer samples textures, so `vt` data is not
+  stored, and faces that refer to missing texture coordinates only produce a warning. OBJ materials keep their diffuse color (`Kd`), baked into vertex colors.
 - **Per-triangle material IDs.** Baking the material color into the vertices gives the renderers a
   single color path, interpolated like the normal.
 - **Precomputed per-triangle data** (face normals, bounding boxes), for the reasons above.

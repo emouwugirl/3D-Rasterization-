@@ -173,6 +173,8 @@ TEST(PlyReader, BadFilesAreErrors) {
                              "element 'vertex' #1: invalid number 'abc'");
   expect_error<ConvertError>([&] { ply(head + v3 + f1 + "end_header\n0 0 0\n1 nan 0\n0 1 0\n3 0 1 2\n"); },
                              "element 'vertex' #1: vertex position is not finite");
+  expect_error<ConvertError>([&] { ply(head + v3 + f1 + "end_header\n0 0 0\n1 1e300 0\n0 1 0\n3 0 1 2\n"); },
+                             "element 'vertex' #1: vertex position is not finite");  // beyond float's range
   expect_error<ConvertError>([&] { ply(head + v3 + f1 + "end_header\n" + rows + "3 0 1\n"); }, "unexpected end of data");
   expect_error<ConvertError>([&] { ply(head + v3 + f1 + "end_header\n" + rows + "200 0 1 2\n"); }, "longer than the rest of the file");
   expect_error<ConvertError>([&] { ply(head + v3 + f1 + "end_header\n" + rows + "2 0 1\n"); }, "t.ply: no triangles");
