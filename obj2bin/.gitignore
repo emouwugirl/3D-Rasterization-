@@ -1,0 +1,13 @@
+# Build trees
+/build*/
+/cmake-build-*/
+compile_commands.json
+
+# Models and converted meshes (large; regenerate with obj2bin)
+/models/
+*.bin
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
