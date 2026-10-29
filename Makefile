@@ -11,15 +11,16 @@ setup: $(DEPENDENCIES)
 $(PYTHON):
 	python3 -m venv .venv
 
-$(DEPENDENCIES): requirements.txt $(PYTHON)
+$(DEPENDENCIES): requirements.txt pyproject.toml $(PYTHON)
 	$(PYTHON) -m pip install -r requirements.txt
 	touch $(DEPENDENCIES)
 
 configure: $(DEPENDENCIES)
 	$(CMAKE) -S . -B build -DPython_EXECUTABLE="$(CURDIR)/$(PYTHON)" -Dpybind11_DIR="$$($(PYTHON) -m pybind11 --cmakedir)" -DRASTY_BUILD_TESTS=OFF
 
-build: configure
-	$(CMAKE) --build build -j
+# This builds the python package
+build: $(DEPENDENCIES)
+	$(PYTHON) -m pip install --no-build-isolation --editable .
 
 clean:
 	rm -rf build

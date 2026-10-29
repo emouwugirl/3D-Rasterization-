@@ -1,4 +1,16 @@
 {
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+    "python.analysis.enableEditableInstalls": true,
     "cmake.sourceDirectory": "${workspaceFolder}",
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json"
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.configureSettings": {
+        "Python_EXECUTABLE": "${workspaceFolder}/.venv/bin/python",
+        "RASTY_BUILD_TESTS": "OFF"
+    },
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "C_Cpp.default.compilerPath": "/usr/bin/c++",
+    "files.associations": {
+        "*.cu": "cuda-cpp",
+        "*.cuh": "cuda-cpp"
+    }
 }
