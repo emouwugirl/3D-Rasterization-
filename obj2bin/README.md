@@ -6,8 +6,8 @@ parsing any text.
 
 ```
 model.obj / model.ply ──► obj2bin ──► model.bin
-   (text, run once)       triangulate,    (binary: vertex arrays + triangle indices,
-                          merge indices,   ready to draw)
+   (text, run once)       triangulate,    (binary: vertex arrays + triangle indices as
+                          merge indices,   16-byte float4/uint4 records, ready to draw)
                           compute normals
 ```
 
@@ -59,7 +59,7 @@ vertices  543,652 (positions, normals)
 triangles 1,087,474
 bounds    min (-0.0461003, 0.0497571, -0.0473989)  max (0.0352217, 0.24778, 0.0340189)
 sphere    center (-0.0054393, 0.148769, -0.00669)  radius 0.105838
-wrote     happy_vrip.bin (26.1 MB) in 0.20 s (read 0.07 s, build 0.12 s, write 0.01 s)
+wrote     happy_vrip.bin (34.8 MB) in 0.22 s (read 0.07 s, build 0.12 s, write 0.02 s)
 ```
 
 ## Input support
