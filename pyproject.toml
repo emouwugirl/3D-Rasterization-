@@ -1,0 +1,39 @@
+[build-system]
+# describing the build system here
+# we need scikit-build-core and pybind11 to properly build our project through pip
+# doing it through pip is better because that's how python intended it
+requires = [
+    "scikit-build-core>=1.0,<2",
+    "pybind11>=3.0,<4",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+# project metadata
+# don't care much, it's just boilerplate configs
+name = "rasty"
+version = "0.1.0"
+description = "I'm rasterizing it"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24,<3",
+]
+
+[project.gui-scripts]
+# rasty command invokes the main function under rasty/app.py
+rasty = "rasty.app:main"
+
+[tool.scikit-build]
+# scikit setup, telling it where the build files are put and where the python package is
+build-dir = "build"
+wheel.packages = ["src/rasty"]
+
+[tool.scikit-build.cmake.define]
+# cmake options for scikit which will invoke cmake
+RASTY_BUILD_TESTS = "OFF"
+
+[tool.pyright]
+# some type checking thing?
+include = ["src"]
+typeCheckingMode = "basic"
