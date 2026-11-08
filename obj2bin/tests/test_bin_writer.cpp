@@ -1,6 +1,7 @@
 // Writing .bin files: the layout, determinism, and the checks a mesh must pass first.
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -48,15 +49,15 @@ TEST(BinWriter, LayoutMatchesTheSpec) {
     bool colors;
     std::uint64_t normals, colors_at, indices, size;
   };
-  // V = 4, T = 4: each array is 48 bytes and starts at the next multiple of 64.
-  for (const Case c : {Case{false, 192, 0, 256, 304}, Case{true, 192, 256, 320, 368}}) {
+  // V = 4, T = 4: each array is 4 records of 16 bytes, so each one ends on a multiple of 64.
+  for (const Case c : {Case{false, 192, 0, 256, 320}, Case{true, 192, 256, 320, 384}}) {
     const Mesh m = tetrahedron(c.colors);
     const std::string path = dir.file("m.bin");
     save_mesh(path, m);
     const std::string b = read_bytes(path);
     ASSERT_EQ(b.size(), c.size);
     EXPECT_EQ(b.substr(0, 8), "RASTYBIN");
-    EXPECT_EQ(field_at<std::uint32_t>(b, 8), 1u);    // version
+    EXPECT_EQ(field_at<std::uint32_t>(b, 8), 2u);    // version
     EXPECT_EQ(field_at<std::uint32_t>(b, 12), 128u); // header size
     EXPECT_EQ(field_at<std::uint32_t>(b, 16), c.colors ? 1u : 0u);
     EXPECT_EQ(field_at<std::uint32_t>(b, 20), 4u);   // vertices
@@ -74,17 +75,36 @@ TEST(BinWriter, LayoutMatchesTheSpec) {
     EXPECT_EQ(field_at<float>(b, 108), bounds.radius);
     for (std::size_t i = 112; i < 128; ++i) EXPECT_EQ(b[i], 0) << "reserved byte " << i;
 
-    // The arrays are the raw float and uint32 values, and the gaps between them are zero.
-    EXPECT_EQ(std::memcmp(b.data() + 128, m.positions.data(), 48), 0);
-    EXPECT_EQ(std::memcmp(b.data() + c.normals, m.normals.data(), 48), 0);
-    if (c.colors) EXPECT_EQ(std::memcmp(b.data() + c.colors_at, m.colors.data(), 48), 0);
-    EXPECT_EQ(std::memcmp(b.data() + c.indices, m.triangles.data(), 48), 0);
-    EXPECT_EQ(field_at<std::uint32_t>(b, c.indices + 12), 0u);  // triangle 1 = (0, 3, 1)
-    EXPECT_EQ(field_at<std::uint32_t>(b, c.indices + 16), 3u);
-    for (const std::uint64_t gap : {std::uint64_t{176}, c.normals + 48}) {
-      for (std::uint64_t i = gap; i < gap + 16; ++i) EXPECT_EQ(b[i], 0) << "padding byte " << i;
+    // Every element is a 16-byte record: x, y, z and w = 1 for positions and colors, w = 0 for normals;
+    // three indices and a 0 for triangles.
+    const auto record = [&](std::uint64_t at) {
+      return std::array<float, 4>{field_at<float>(b, at), field_at<float>(b, at + 4), field_at<float>(b, at + 8),
+                                  field_at<float>(b, at + 12)};
+    };
+    EXPECT_EQ(record(128 + 16), (std::array<float, 4>{1, -1, -1, 1}));  // position 1
+    const Vec3f n2 = m.normals[2];
+    EXPECT_EQ(record(c.normals + 32), (std::array<float, 4>{n2.x, n2.y, n2.z, 0}));
+    if (c.colors) EXPECT_EQ(record(c.colors_at + 48), (std::array<float, 4>{0.5f, 0.5f, 0.5f, 1}));  // color 3
+    for (std::uint64_t k = 0; k < 4; ++k) {  // triangle 1 = (0, 3, 1)
+      EXPECT_EQ(field_at<std::uint32_t>(b, c.indices + 16 + 4 * k), (std::array<std::uint32_t, 4>{0, 3, 1, 0}[k]));
     }
+    expect_bin_holds(path, m);
   }
+}
+
+TEST(BinWriter, ArraysStartOnCacheLines) {
+  // V = 5: 80 bytes of positions, so the normals start after 48 bytes of zero padding, at 256.
+  Mesh m;
+  m.positions = {{0, 1, 0}, {1, 0, 1}, {1, 0, -1}, {-1, 0, -1}, {-1, 0, 1}};
+  for (const Vec3f& p : m.positions) m.normals.push_back(test::unit(p.x, p.y - 0.5f, p.z));
+  m.triangles = {{{0, 1, 2}}, {{0, 2, 3}}, {{0, 3, 4}}, {{0, 4, 1}}, {{1, 4, 3}}, {{1, 3, 2}}};
+  TempDir dir;
+  save_mesh(dir.file("p.bin"), m);
+  const std::string b = read_bytes(dir.file("p.bin"));
+  EXPECT_EQ(field_at<std::uint64_t>(b, 40), 256u);  // normals: align64(128 + 80)
+  EXPECT_EQ(field_at<std::uint64_t>(b, 56), 384u);  // indices: align64(256 + 80)
+  EXPECT_EQ(b.size(), 384u + 6 * 16);
+  expect_bin_holds(dir.file("p.bin"), m);  // includes the zero padding between the arrays
 }
 
 TEST(BinWriter, SameMeshGivesTheSameBytes) {

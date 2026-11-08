@@ -85,7 +85,8 @@ inline void expect_same_mesh(const Mesh& a, const Mesh& b) {
 }
 
 // Checks byte by byte that the file at `path` holds `mesh` in the documented layout: header fields,
-// bounds, each array at its offset, and zeros everywhere else.
+// bounds, each array at its offset as 16-byte records with the right fourth component, and zeros
+// everywhere else.
 inline void expect_bin_holds(const std::string& path, const Mesh& mesh) {
   const std::string b = read_bytes(path);
   ASSERT_GE(b.size(), sizeof(bin::Header));
@@ -94,14 +95,14 @@ inline void expect_bin_holds(const std::string& path, const Mesh& mesh) {
 
   const auto align = [](std::uint64_t n) { return (n + 63) / 64 * 64; };
   const std::uint64_t nv = mesh.vertex_count(), nt = mesh.triangle_count();
-  const std::uint64_t normals = align(128 + 12 * nv);
-  std::uint64_t next = align(normals + 12 * nv);
+  const std::uint64_t normals = align(128 + 16 * nv);
+  std::uint64_t next = align(normals + 16 * nv);
   const std::uint64_t colors = mesh.has_colors() ? next : 0;
-  if (mesh.has_colors()) next = align(colors + 12 * nv);
-  const std::uint64_t indices = next, size = indices + 12 * nt;
+  if (mesh.has_colors()) next = align(colors + 16 * nv);
+  const std::uint64_t indices = next, size = indices + 16 * nt;
 
   EXPECT_EQ(std::string(h.magic, 8), "RASTYBIN");
-  EXPECT_EQ(h.version, 1u);
+  EXPECT_EQ(h.version, 2u);
   EXPECT_EQ(h.header_size, 128u);
   EXPECT_EQ(h.flags, mesh.has_colors() ? 1u : 0u);
   EXPECT_EQ(h.vertex_count, nv);
@@ -118,16 +119,25 @@ inline void expect_bin_holds(const std::string& path, const Mesh& mesh) {
   EXPECT_TRUE(same_bits(h.center, bounds.center));
   EXPECT_EQ(h.radius, bounds.radius);
 
-  std::string rest = b;  // everything but the header fields and the arrays must be zero
-  const auto take = [&](std::uint64_t offset, const void* data, std::uint64_t bytes) {
-    EXPECT_EQ(std::memcmp(b.data() + offset, data, bytes), 0) << "array at offset " << offset;
-    std::memset(&rest[offset], 0, bytes);
-  };
+  std::string rest = b;  // everything but the header fields and the records must be zero
   std::memset(&rest[0], 0, offsetof(bin::Header, reserved1));
-  take(128, mesh.positions.data(), 12 * nv);
-  take(normals, mesh.normals.data(), 12 * nv);
-  if (mesh.has_colors()) take(colors, mesh.colors.data(), 12 * nv);
-  take(indices, mesh.triangles.data(), 12 * nt);
+  const auto take = [&](std::uint64_t at, const void* expected, std::size_t bytes, const char* what, std::size_t i) {
+    EXPECT_EQ(std::memcmp(b.data() + at, expected, bytes), 0) << what << " " << i;
+    std::memset(&rest[at], 0, bytes);
+  };
+  const auto vertices = [&](std::uint64_t offset, const std::vector<Vec3f>& values, float w, const char* what) {
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      const float record[4] = {values[i].x, values[i].y, values[i].z, w};
+      take(offset + 16 * i, record, 16, what, i);
+    }
+  };
+  vertices(128, mesh.positions, 1.0f, "position");
+  vertices(normals, mesh.normals, 0.0f, "normal");
+  if (mesh.has_colors()) vertices(colors, mesh.colors, 1.0f, "color");
+  for (std::size_t t = 0; t < nt; ++t) {
+    const std::uint32_t record[4] = {mesh.triangles[t].v[0], mesh.triangles[t].v[1], mesh.triangles[t].v[2], 0};
+    take(indices + 16 * t, record, 16, "triangle", t);
+  }
   EXPECT_EQ(rest, std::string(rest.size(), '\0')) << "padding and reserved bytes must be zero";
 }
 
