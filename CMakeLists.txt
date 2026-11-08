@@ -27,6 +27,7 @@ find_package(pybind11 CONFIG REQUIRED)
 
 enable_testing()
 add_subdirectory(obj2bin)
+add_subdirectory(mathcore)
 
 pybind11_add_module(_native bindings/module.cpp)
 
