@@ -12,5 +12,6 @@
     "files.associations": {
         "*.cu": "cuda-cpp",
         "*.cuh": "cuda-cpp"
-    }
+    },
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }
