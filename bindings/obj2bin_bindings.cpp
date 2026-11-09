@@ -1,3 +1,5 @@
+// this file defines the bindings related to obj2bin
+
 #include "obj2bin_bindings.hpp"
 
 #include <cstdint>
@@ -9,14 +11,20 @@
 #include "convert.hpp"
 #include "rasty/bin_format.hpp"
 
+// just alias pybind11 to py
 namespace py = pybind11;
 
 void bind_obj2bin(py::module_& module)
 {
+    // defining obj2bin's error types
     py::register_exception<rasty::convert::ConvertError>(module, "ConvertError");
 
     py::register_exception<rasty::MeshError>(module, "MeshError");
 
+    // function that binds obj2bin's convert model to python
+    // from python, call _native.convert_model
+    // does setup of inputs, releases GIL whatever that means during conversion
+    // then sets up the output as a python dictionary
     module.def(
         "convert_model",
         [](const std::string& input, const std::string& output, bool recompute_normals, bool keep_colors) {
