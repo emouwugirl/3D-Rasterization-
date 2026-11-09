@@ -42,7 +42,12 @@ the winning triangle per pixel.
 
 ## CMake and CUDA
 
-The `mathcore` CMake interface target exports this folder and requires C++20. It does not enable CUDA in
+The shared header lives in `renderer/common/`. The `mathcore` CMake interface target exports this
+folder and requires C++20. Both `cpu_renderer` and `gpu_renderer` link it, so their consumers can use
+`#include "mathcore.h"`. Those renderer targets are interface scaffolds until implementation sources
+are added. The root build includes all three through `renderer/CMakeLists.txt`.
+
+The math core does not enable CUDA in
 the root project; a CUDA renderer can link the target from its own CUDA-enabled build. For parity runs,
 compile CUDA with fused multiply-add disabled (`--fmad=false`) and without fast math. Integer raster
 operations are intended to match exactly; floating-point transform and lighting comparisons still need
