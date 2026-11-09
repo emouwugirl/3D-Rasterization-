@@ -29,7 +29,14 @@ enable_testing()
 add_subdirectory(obj2bin)
 add_subdirectory(mathcore)
 
-pybind11_add_module(_native bindings/module.cpp)
+pybind11_add_module(_native 
+  bindings/module.cpp
+  bindings/obj2bin_bindings.cpp)
+
+target_include_directories(_native PRIVATE bindings)
+target_link_libraries(_native PRIVATE obj2bin_lib)
+
+set_target_properties(obj2bin_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # scikit-build-core installs the extension beside src/rasty/__init__.py, making
 # it importable as rasty._native on every supported platform.
