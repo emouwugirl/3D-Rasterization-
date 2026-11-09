@@ -1,3 +1,6 @@
+"""this file is for asset related stuff"""
+"""for now it just has a helper function for converting models"""
+"""this function is different from rasty._native.convert_model which is a binding"""
 from pathlib import Path
 from typing import Optional
 

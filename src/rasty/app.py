@@ -1,5 +1,6 @@
 """The whole app goes here"""
 """GUI goes in gui"""
+"""this is the entry point into our app"""
 import rasty
 import argparse
 

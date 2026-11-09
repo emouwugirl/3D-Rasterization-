@@ -1,5 +1,7 @@
 from typing import TypedDict
 
+"""type info for python (specifically pylance) to not complain"""
+
 class ConvertReport(TypedDict):
     input: str
     output: str
