@@ -8,7 +8,8 @@
 
 namespace rasty::gpu {
 
-// One allocation
+// GPU memory
+// allocates memory, copies results back, and automatically frees the allocation
 template <typename T>
 class DeviceBuffer {
   static_assert(std::is_trivially_copyable_v<T>);
@@ -32,6 +33,12 @@ class DeviceBuffer {
   DeviceBuffer& operator=(const DeviceBuffer&) = delete;
 
   T* data() const { return data_; }
+
+  // Source must contain at least count elements
+  void upload(const T* source) {
+    if (count_ != 0)
+      check_cuda(cudaMemcpy(data_, source, count_ * sizeof(T), cudaMemcpyHostToDevice), "Upload GPU buffer");
+  }
 
   // Destination must have room for count elements
   void download(T* destination) const {
