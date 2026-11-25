@@ -9,8 +9,8 @@ allocation, exceptions, recursion, or renderer-specific work.
 ## Shared conventions
 
 - Right-handed world and view coordinates; +Y is up and the camera looks down -Z.
-- Model-space front faces are counter-clockwise. The viewport flips Y, so those faces have negative
-  screen-space signed area; `front_facing(area)` tests that convention.
+- Model-space front faces are counter-clockwise. After the viewport flips Y, this library's edge
+  formula gives front-facing triangles positive area; `front_facing(area)` tests that convention.
 - Matrices are column-major in memory and multiply column vectors. Compose transforms as
   `projection * view * model`.
 - `perspective()` maps near to depth 0 and far to depth 1. NDC y is flipped once in `viewport()`, so
@@ -30,8 +30,9 @@ caller to triangulate. Side clipping can be skipped when the renderer clamps `bo
 image or tile.
 
 `to_fixed`, `pixel_center`, `edge_function`, `is_top_left`, and `inside_top_left` implement deterministic
-coverage. For a front-facing triangle, the edge values are non-positive; non-top-left edges receive a
-minus-one bias. `edge_step_x` and `edge_step_y` give the per-pixel increments. `barycentric` and
+coverage. Reject zero-area and back-facing triangles first. For a front-facing triangle, positive
+edge values are inside; zero is accepted only on top or left edges. Use the original edge values
+for interpolation. `edge_step_x` and `edge_step_y` give the per-pixel increments. `barycentric` and
 `barycentric_at_pixel` provide interpolation weights. Depth is linear in screen space, while
 `interpolate_perspective` applies perspective correction to 2D, 3D, or 4D attributes.
 

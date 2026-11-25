@@ -205,20 +205,20 @@ RASTY_MATH_HD IVec2 pixel_center(int32_t x, int32_t y) {
   return {x*kSubpixelScale+kHalfSubpixel,y*kSubpixelScale+kHalfSubpixel};
 }
 // Signed edge value using the project's chosen orientation. For CCW world
-// faces after the viewport Y flip, front-facing triangles have negative area.
+// faces after the viewport Y flip, front-facing triangles have positive area.
 RASTY_MATH_HD int64_t edge_function(IVec2 a, IVec2 b, IVec2 p) {
   return (int64_t(p.x)-a.x)*(int64_t(b.y)-a.y)-(int64_t(p.y)-a.y)*(int64_t(b.x)-a.x);
 }
-RASTY_MATH_HD int64_t edge_step_x(IVec2 a, IVec2 b) { return int64_t(b.y)-a.y; }
-RASTY_MATH_HD int64_t edge_step_y(IVec2 a, IVec2 b) { return int64_t(a.x)-b.x; }
-RASTY_MATH_HD bool front_facing(int64_t signed_area) { return signed_area < 0; }
+// coordinates need to step by a whole pixel
+RASTY_MATH_HD int64_t edge_step_x(IVec2 a, IVec2 b) { return (int64_t(b.y)-a.y)*kSubpixelScale; }
+RASTY_MATH_HD int64_t edge_step_y(IVec2 a, IVec2 b) { return (int64_t(a.x)-b.x)*kSubpixelScale; }
+RASTY_MATH_HD bool front_facing(int64_t signed_area) { return signed_area > 0; } // positive area 
 RASTY_MATH_HD bool is_top_left(IVec2 a, IVec2 b) {
-  const int32_t dx=b.x-a.x, dy=b.y-a.y; return dy<0 || (dy==0 && dx>0);
+  return b.y>a.y || (b.y==a.y && b.x<a.x);
 }
-// Inputs are edge values for a front-facing (negative-area) triangle.
+// Positive means inside. Zero belongs only to a top or left edge
 RASTY_MATH_HD bool inside_top_left(int64_t e0, bool tl0, int64_t e1, bool tl1, int64_t e2, bool tl2) {
-  if (!tl0) --e0; if (!tl1) --e1; if (!tl2) --e2;
-  return e0<=0 && e1<=0 && e2<=0;
+  return (e0>0 || (e0==0 && tl0)) && (e1>0 || (e1==0 && tl1)) && (e2>0 || (e2==0 && tl2));
 }
 RASTY_MATH_HD IRect bounding_box(IVec2 a, IVec2 b, IVec2 c, int32_t width, int32_t height) {
   int32_t minx=a.x, maxx=a.x, miny=a.y, maxy=a.y;
