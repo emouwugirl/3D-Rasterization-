@@ -42,10 +42,14 @@ the winning triangle per pixel.
 
 ## CMake and CUDA
 
-The shared header lives in `renderer/common/`. The `mathcore` CMake interface target exports this
-folder and requires C++20. Both `cpu_renderer` and `gpu_renderer` link it, so their consumers can use
-`#include "mathcore.h"`. Those renderer targets are interface scaffolds until implementation sources
-are added. The root build includes all three through `renderer/CMakeLists.txt`.
+The shared headers live in `renderer/common/`. The `mathcore` target exports this folder and requires
+C++20. `renderer.h` defines the host-side `rasty::Renderer` interface shared by CPU and GPU
+implementations: it takes the existing `rasty::Mesh` and `RenderSettings`, then returns a row-major
+`FrameBuffer` of packed `0xAABBGGRR` pixels. Its contract uses pixel-center/top-left coverage and the
+depth/triangle-ID tie-break described above. The `renderer_api` target exports this interface and
+links `mathcore`; both renderer targets link `renderer_api`. They remain interface scaffolds until
+implementation sources are added. The root build includes these targets through
+`renderer/CMakeLists.txt`.
 
 The math core does not enable CUDA in
 the root project; a CUDA renderer can link the target from its own CUDA-enabled build. For parity runs,
