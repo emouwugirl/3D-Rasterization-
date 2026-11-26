@@ -22,7 +22,7 @@ namespace rasty::gpu {
                 const auto& p = positions[i];
                 const auto& n = normals[i];
                 vertices[i] = pipeline::vertex_stage(constants, math::vec4(p.x, p.y, p.z, 1.0f));
-                world_normals[i] = pipeline::world_normals(constants, math::vec3(n.x, n.y, n.z));
+                world_normals[i] = pipeline::world_normal(constants, math::vec3(n.x, n.y, n.z));
             }
         }
     }
