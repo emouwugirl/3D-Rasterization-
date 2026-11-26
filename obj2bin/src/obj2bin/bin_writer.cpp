@@ -33,14 +33,15 @@ struct Layout {
 Layout layout_for(std::uint64_t vertices, std::uint64_t triangles, bool has_colors) {
   Layout l;
   l.positions = bin::kHeaderSize;
-  l.normals = align_up(l.positions + 12 * vertices);
-  std::uint64_t next = align_up(l.normals + 12 * vertices);
+  const std::uint64_t vertex_bytes = bin::kRecordSize * vertices;
+  l.normals = align_up(l.positions + vertex_bytes);
+  std::uint64_t next = align_up(l.normals + vertex_bytes);
   if (has_colors) {
     l.colors = next;
-    next = align_up(l.colors + 12 * vertices);
+    next = align_up(l.colors + vertex_bytes);
   }
   l.indices = next;
-  l.file_size = l.indices + 12 * triangles;
+  l.file_size = l.indices + bin::kRecordSize * triangles;
   return l;
 }
 
@@ -200,15 +201,34 @@ Bounds save_mesh(const std::string& path, const Mesh& mesh) {
       if (ok && bytes > 0) ok = std::fwrite(data, 1, static_cast<std::size_t>(bytes), out.f) == bytes;
       written += bytes;
     };
-    const auto put_at = [&](std::uint64_t offset, const void* data, std::uint64_t bytes) {
+    // Each array is written as 16-byte records, converted a chunk at a time.
+    constexpr std::size_t kChunk = 4096;
+    const auto put_vertices = [&](std::uint64_t offset, const std::vector<Vec3f>& values, float w) {
       put(zeros, offset - written);  // padding up to the array's offset (always less than 64 bytes)
-      put(data, bytes);
+      bin::VertexRecord chunk[kChunk];
+      for (std::size_t i = 0; i < values.size(); i += kChunk) {
+        const std::size_t n = std::min(kChunk, values.size() - i);
+        for (std::size_t k = 0; k < n; ++k) chunk[k] = bin::VertexRecord{values[i + k].x, values[i + k].y, values[i + k].z, w};
+        put(chunk, n * sizeof(bin::VertexRecord));
+      }
+    };
+    const auto put_triangles = [&](std::uint64_t offset, const std::vector<Triangle>& values) {
+      put(zeros, offset - written);
+      bin::TriangleRecord chunk[kChunk];
+      for (std::size_t i = 0; i < values.size(); i += kChunk) {
+        const std::size_t n = std::min(kChunk, values.size() - i);
+        for (std::size_t k = 0; k < n; ++k) {
+          const Triangle& t = values[i + k];
+          chunk[k] = bin::TriangleRecord{{t.v[0], t.v[1], t.v[2]}, 0u};
+        }
+        put(chunk, n * sizeof(bin::TriangleRecord));
+      }
     };
     put(&h, sizeof h);
-    put_at(layout.positions, mesh.positions.data(), 12 * nv);
-    put_at(layout.normals, mesh.normals.data(), 12 * nv);
-    if (mesh.has_colors()) put_at(layout.colors, mesh.colors.data(), 12 * nv);
-    put_at(layout.indices, mesh.triangles.data(), 12 * nt);
+    put_vertices(layout.positions, mesh.positions, 1.0f);
+    put_vertices(layout.normals, mesh.normals, 0.0f);
+    if (mesh.has_colors()) put_vertices(layout.colors, mesh.colors, 1.0f);
+    put_triangles(layout.indices, mesh.triangles);
     ok = ok && written == layout.file_size && flush_to_disk(out.f);
     ok = out.close() && ok;
   }

@@ -4,15 +4,23 @@
 // straight into memory, with no parsing and no per-vertex work. docs/bin-format.md explains the format
 // and its choices.
 //
-// File layout (version 1). All values are little-endian. Every array starts at a multiple of 64 bytes;
+// File layout (version 2). All values are little-endian. Every array starts at a multiple of 64 bytes;
 // the bytes between arrays are zero.
 //
 //   offset  size        contents
 //   0       128         Header (below)
-//   128     12 * V      positions: V x float32[3], object space, as in the source model
-//   ...     12 * V      normals:   V x float32[3], unit length, one per vertex
-//   ...     12 * V      colors:    V x float32[3], linear RGB albedo in [0, 1] (only if flags & kFlagColors)
-//   ...     12 * T      indices:   T x uint32[3], one triangle each; counter-clockwise seen from the front
+//   128     16 * V      positions: V x float32[4] (x, y, z, 1), object space, as in the source model
+//   ...     16 * V      normals:   V x float32[4] (x, y, z, 0), unit length, one per vertex
+//   ...     16 * V      colors:    V x float32[4] (r, g, b, 1), linear RGB albedo in [0, 1]
+//                                  (only if flags & kFlagColors)
+//   ...     16 * T      indices:   T x uint32[4] (a, b, c, 0), one triangle each; counter-clockwise seen
+//                                  from the front
+//
+// Every element is padded to a 16-byte record so that each is one aligned 128-bit load: a CUDA float4
+// or uint4, or one SSE/NEON register. Parallel readers (a GPU warp, SIMD lanes) then fetch consecutive
+// records with fully coalesced, never-split loads. The fourth component is useful, not just filler:
+// w = 1 makes a position a homogeneous point and w = 0 makes a normal a direction, so one 4x4 matrix
+// transforms both.
 //
 // Every header offset is where its array starts, so a reader only needs the header to find the data.
 #pragma once
@@ -83,10 +91,26 @@ Bounds compute_bounds(const std::vector<Vec3f>& positions);
 namespace bin {
 
 inline constexpr char kMagic[8] = {'R', 'A', 'S', 'T', 'Y', 'B', 'I', 'N'};
-inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kVersion = 2;
 inline constexpr std::uint32_t kHeaderSize = 128;
 inline constexpr std::uint32_t kAlignment = 64;
+inline constexpr std::uint32_t kRecordSize = 16;
 inline constexpr std::uint32_t kFlagColors = 1u << 0;
+
+// One element of the vertex arrays: the layout of CUDA's float4. w is 1 for positions and colors, 0 for
+// normals.
+struct alignas(16) VertexRecord {
+  float x, y, z, w;
+};
+
+// One element of the index array: the layout of CUDA's uint4. pad is always 0.
+struct alignas(16) TriangleRecord {
+  std::uint32_t v[3];
+  std::uint32_t pad;
+};
+
+static_assert(sizeof(VertexRecord) == kRecordSize && alignof(VertexRecord) == 16, "a vertex record is 16 bytes");
+static_assert(sizeof(TriangleRecord) == kRecordSize && alignof(TriangleRecord) == 16, "a triangle record is 16 bytes");
 
 struct Header {
   char magic[8];                   //   0  "RASTYBIN"
@@ -100,7 +124,7 @@ struct Header {
   std::uint64_t normals_offset;    //  40
   std::uint64_t colors_offset;     //  48  0 when there are no colors
   std::uint64_t indices_offset;    //  56
-  std::uint64_t file_size;         //  64  indices_offset + 12 * T
+  std::uint64_t file_size;         //  64  indices_offset + 16 * T
   Vec3f bounds_min;                //  72
   Vec3f bounds_max;                //  84
   Vec3f center;                    //  96
