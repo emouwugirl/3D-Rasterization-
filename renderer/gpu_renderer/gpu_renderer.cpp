@@ -44,6 +44,9 @@ FrameBuffer GpuRenderer::render(const Mesh& mesh, const RenderSettings& settings
   gpu::DeviceBuffer<math::Vec3f> world_normals(vertex_count);
   gpu::transform(constants, positions.data(), normals.data(), vertex_count, vertices.data(), world_normals.data());
 
+  // arsens next step
+  
+
   pixels.download(frame.rgba.data());
   return frame;
 }
