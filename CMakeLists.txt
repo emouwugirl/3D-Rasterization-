@@ -31,10 +31,11 @@ add_subdirectory(renderer)
 
 pybind11_add_module(_native 
   bindings/module.cpp
-  bindings/obj2bin_bindings.cpp)
+  bindings/obj2bin_bindings.cpp
+  bindings/renderer_bindings.cpp)
 
 target_include_directories(_native PRIVATE bindings)
-target_link_libraries(_native PRIVATE obj2bin_lib)
+target_link_libraries(_native PRIVATE obj2bin_lib cpu_renderer)
 
 set_target_properties(obj2bin_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

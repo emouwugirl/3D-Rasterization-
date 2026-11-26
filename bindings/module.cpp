@@ -6,6 +6,7 @@
 #include <pybind11/pybind11.h>
 
 #include "obj2bin_bindings.hpp"
+#include "renderer_bindings.hpp"
 
 int add(int a, int b) {
     return a + b;
@@ -19,4 +20,7 @@ PYBIND11_MODULE(_native, m) {
     
     // bind everything for obj2bin
     bind_obj2bin(m);
+
+    // bind the CPU renderer
+    bind_renderer(m);
 }
