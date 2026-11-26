@@ -103,18 +103,6 @@ RASTY_STAGE_HD Vec3f world_normal(const FrameConstants& k, Vec3f model_normal) {
 
 // ---- 2. Triangle setup -----------------------------------------------------------------------------
 
-// Edge helpers. With mathcore's edge_function(), a front-facing (counter-clockwise) triangle has
-// positive area once the viewport flips y, and pixels inside it have positive edge values.
-//
-// How much an edge value changes when we move one pixel (256 subpixels) right or down.
-RASTY_STAGE_HD int64_t step_right(IVec2 a, IVec2 b) { return ((int64_t)b.y - a.y) * kSubpixelScale; }
-RASTY_STAGE_HD int64_t step_down(IVec2 a, IVec2 b) { return ((int64_t)a.x - b.x) * kSubpixelScale; }
-
-// Top-left rule: a pixel center exactly on an edge (edge value 0) only counts if the edge is a top edge
-// (flat, running left) or a left edge (running down). Two triangles that share an edge then never both
-// draw the pixels on it.
-RASTY_STAGE_HD bool is_top_or_left(IVec2 a, IVec2 b) { return b.y > a.y || (b.y == a.y && b.x < a.x); }
-
 // What raster needs for one triangle. The CPU makes one on the stack per triangle; a GPU version would
 // keep an array of them between its setup and raster kernels.
 struct TriSetup {
@@ -151,9 +139,9 @@ RASTY_STAGE_HD bool setup_triangle(const FrameConstants& k, IVec2 a, IVec2 b, IV
   const IVec2 first = pixel_center(t.box.x0, t.box.y0);
   for (int i = 0; i < 3; ++i) {
     t.edge[i] = edge_function(from[i], to[i], first);
-    t.step_x[i] = step_right(from[i], to[i]);
-    t.step_y[i] = step_down(from[i], to[i]);
-    t.min_edge[i] = is_top_or_left(from[i], to[i]) ? 0 : 1;
+    t.step_x[i] = math::edge_step_x(from[i], to[i]);
+    t.step_y[i] = math::edge_step_y(from[i], to[i]);
+    t.min_edge[i] = math::is_top_left(from[i], to[i]) ? 0 : 1;
   }
   t.area = area;
   t.depth[0] = za;
