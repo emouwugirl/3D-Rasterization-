@@ -3,10 +3,12 @@
 #include <cmath>
 #include <stdexcept>
 
-#include "clear.h"
 #include "device_buffer.h"
 #include "rasty/bin_format.hpp"
+#include "clear.h"
 #include "transform.h"
+#include "raster.h"
+#include "shade.h"
 
 namespace rasty {
 
@@ -28,7 +30,7 @@ FrameBuffer GpuRenderer::render(const Mesh& mesh, const RenderSettings& settings
   gpu::clear(pixels.data(), count, math::to_rgba8(color));
 
   // prepare the matrices for all the vertices
-  const auto constants = pipeline::make_frame_constants(
+  auto constants = pipeline::make_frame_constants(
       settings.model, settings.view, settings.projection,
       static_cast<std::int32_t>(frame.width), static_cast<std::int32_t>(frame.height));
 
@@ -51,6 +53,11 @@ FrameBuffer GpuRenderer::render(const Mesh& mesh, const RenderSettings& settings
   gpu::check_cuda(cudaMemset(visibility.data(), 0xff, count * sizeof(unsigned long long)), "clearing the visibility buffer");
 
   gpu::raster(constants, vertices.data(), triangles.data(), mesh.triangle_count(), visibility.data());
+
+  gpu::DeviceBuffer<rasty::Vec3f> colors(mesh.colors.size());
+  colors.upload(mesh.colors.data());
+
+  gpu::shade(constants, visibility.data(), triangles.data(), vertices.data(), world_normals.data(), colors.data(), pixels.data());
 
   pixels.download(frame.rgba.data());
   return frame;
