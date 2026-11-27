@@ -44,8 +44,13 @@ FrameBuffer GpuRenderer::render(const Mesh& mesh, const RenderSettings& settings
   gpu::DeviceBuffer<math::Vec3f> world_normals(vertex_count);
   gpu::transform(constants, positions.data(), normals.data(), vertex_count, vertices.data(), world_normals.data());
 
-  // arsens next step
-  
+  gpu::DeviceBuffer<Triangle> triangles(mesh.triangle_count());
+  triangles.upload(mesh.triangles.data());
+  gpu::DeviceBuffer<unsigned long long> visibility(count);
+
+  gpu::check_cuda(cudaMemset(visibility.data(), 0xff, count * sizeof(unsigned long long)), "clearing the visibility buffer");
+
+  gpu::raster(constants, vertices.data(), triangles.data(), mesh.triangle_count(), visibility.data());
 
   pixels.download(frame.rgba.data());
   return frame;
