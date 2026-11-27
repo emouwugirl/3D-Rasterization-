@@ -33,6 +33,10 @@ FrameBuffer GpuRenderer::render(const Mesh& mesh, const RenderSettings& settings
   auto constants = pipeline::make_frame_constants(
       settings.model, settings.view, settings.projection,
       static_cast<std::int32_t>(frame.width), static_cast<std::int32_t>(frame.height));
+  constants.light_direction = math::normalize_or(settings.light_direction, math::vec3(0.0f, 0.0f, 1.0f));
+  constants.clear_color = color;
+  constants.ambient = settings.ambient;
+  constants.diffuse = settings.diffuse;
 
   // upload cpu to gpu the pos and normals inputs
   const std::size_t vertex_count = mesh.vertex_count();

@@ -53,3 +53,20 @@ class CpuRenderer:
         pitch: float = 0.25,
         distance: float = 3.0,
     ) -> tuple[npt.NDArray[np.uint8], FrameStats]: ...
+
+class GpuFrameStats(TypedDict):
+    total_ms: float
+
+class GpuRenderer:
+    """CUDA renderer available when RASTY_BUILD_GPU is enabled."""
+
+    def __init__(self) -> None: ...
+    def load(self, path: str) -> ModelInfo: ...
+    def render(
+        self,
+        width: int,
+        height: int,
+        yaw: float = 0.6,
+        pitch: float = 0.25,
+        distance: float = 3.0,
+    ) -> tuple[npt.NDArray[np.uint8], GpuFrameStats]: ...

@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.18)
 
 project(rasty LANGUAGES CXX)
 
+option(RASTY_BUILD_GPU "Build the CUDA renderer" OFF)
+if(RASTY_BUILD_GPU)
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -36,6 +42,10 @@ pybind11_add_module(_native
 
 target_include_directories(_native PRIVATE bindings)
 target_link_libraries(_native PRIVATE obj2bin_lib cpu_renderer)
+if(RASTY_BUILD_GPU)
+  target_link_libraries(_native PRIVATE gpu_renderer CUDA::cudart)
+  target_compile_definitions(_native PRIVATE RASTY_BUILD_GPU)
+endif()
 
 set_target_properties(obj2bin_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
